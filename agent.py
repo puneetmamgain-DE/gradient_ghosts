@@ -44,7 +44,7 @@ class ShoppingAgent:
 
         ids, sims = topk_products_from_index(self.index, emb, k=k)
         product_ids = [str(i + 1) for i in ids]
-        products = [fetch_product_by_id(pid, db_path=self.meta_db) for pid in product_ids]
+        products = [fetch_product_by_id(pid) for pid in product_ids]
         return products, sims
     def generate_lookbook(self, user_request, retrieved_products, chat_history):
         """
