@@ -4,10 +4,12 @@ import json
 import openai
 from utils import load_faiss_index, fetch_product_by_id, get_embeddings, topk_products_from_index
 import numpy as np
+import hashlib
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if OPENAI_API_KEY:
     openai.api_key = OPENAI_API_KEY
+
 
 class ShoppingAgent:
     def __init__(self, index_path_openai="product_index_openai.faiss",
@@ -17,7 +19,6 @@ class ShoppingAgent:
         self.emb_method = emb_method
         self.meta_db = meta_db
 
-        # Load indices if files exist
         self.index_openai = load_faiss_index(index_path_openai) if index_path_openai and os.path.exists(index_path_openai) else None
         self.index_local = load_faiss_index(index_path_local) if index_path_local and os.path.exists(index_path_local) else None
 
@@ -30,112 +31,174 @@ class ShoppingAgent:
             raise ValueError(f"No FAISS index found for emb_method='{emb_method}'")
 
         self.index = self.index_map[emb_method]
+        self.used_lookbooks = set()
         print(f"[ShoppingAgent] Using {emb_method} embeddings with index dim={self.index.d}")
 
+    # -------------------------------------------------
+    # Gender intent detection (USER INTENT ONLY)
+    # -------------------------------------------------
+    def _detect_gender_intent(self, text: str):
+        t = text.lower()
+
+        men_aliases = [
+            "men", "man", "male", "mens", "men's", "boys", "boy", "gents", "gentlemen"
+        ]
+        women_aliases = [
+            "women", "woman", "female", "womens", "women's", "girls", "girl", "ladies"
+        ]
+
+        men_hit = any(a in t for a in men_aliases)
+        women_hit = any(a in t for a in women_aliases)
+
+        if men_hit and not women_hit:
+            return "men"
+        if women_hit and not men_hit:
+            return "women"
+        return None  # gender not requested
+
+    # -------------------------------------------------
+    # HARD gender gate (ABSOLUTE, NO LEAKAGE)
+    # -------------------------------------------------
+    def _gender_matches(self, product, gender):
+        cat = product.get("category", "").lower()
+        attrs = json.dumps(product.get("attributes", "")).lower()
+        text = f"{cat} {attrs}"
+
+        men_terms = ["men", "man", "male", "mens", "men's", "gents", "boy"]
+        women_terms = ["women", "woman", "female", "womens", "women's", "ladies", "girl"]
+
+        # USER ASKED FOR MEN → WOMEN MUST NEVER PASS
+        if gender == "men":
+            if any(w in text for w in women_terms):
+                return False
+            return any(m in text for m in men_terms)
+
+        # USER ASKED FOR WOMEN → MEN MUST NEVER PASS
+        if gender == "women":
+            if any(m in text for m in men_terms):
+                return False
+            return any(w in text for w in women_terms)
+
+        # NO GENDER INTENT → ALLOW ALL
+        return True
+
+    # -------------------------------------------------
+    # Retrieval with strict gender enforcement
+    # -------------------------------------------------
     def retrieve(self, text, k=8):
+        gender_intent = self._detect_gender_intent(text)
+
         emb = get_embeddings([text], model=self.emb_method)[0]
         emb = np.ascontiguousarray(emb, dtype=np.float32)
 
         if emb.shape[0] != self.index.d:
             raise ValueError(
-                f"Embedding dimension {emb.shape[0]} does not match FAISS index dimension {self.index.d}. "
-                f"Check emb_method or rebuild index."
+                f"Embedding dimension {emb.shape[0]} does not match FAISS index dimension {self.index.d}."
             )
 
-        ids, sims = topk_products_from_index(self.index, emb, k=k)
-        product_ids = [str(i + 1) for i in ids]
-        products = [fetch_product_by_id(pid) for pid in product_ids]
-        return products, sims
+        ids, sims = topk_products_from_index(self.index, emb, k=k * 4)
+
+        products = []
+        scores = []
+
+        for pid, score in zip(ids, sims):
+            p = fetch_product_by_id(str(pid + 1))
+            if not p:
+                continue
+
+            if not self._gender_matches(p, gender_intent):
+                continue
+
+            products.append(p)
+            scores.append(score)
+
+            if len(products) >= k:
+                break
+
+        return products, scores
+
+    # -------------------------------------------------
+    # Lookbook generation (gender-safe + unique)
+    # -------------------------------------------------
     def generate_lookbook(self, user_request, retrieved_products, chat_history):
-        """
-        Build a prompt using retrieved products and call LLM to create:
-        - a curated lookbook (list of 4-8 items with explanation for each)
-        - styling notes
-        - suggested complementary items (post-purchase)
-        - short checkout action suggestion
-        Return structured JSON.
-        """
-        # Build the context text from retrieved products
+        gender_intent = self._detect_gender_intent(user_request)
+
         ctx_items = []
         for p in retrieved_products:
-            if p is None:
+            if not p:
                 continue
-            ctx_items.append(f"- {p['title']}. Price: ${p['price']}. Category: {p['category']}. Attributes: {p['attributes']}")
+            if not self._gender_matches(p, gender_intent):
+                continue
+            ctx_items.append(
+                f"- ID:{p['id']} | {p['title']} | ${p['price']} | {p['category']} | {p['attributes']}"
+            )
 
         system = (
-            "You are an expert personal shopper assistant. Given the user's request and a small catalog of products, "
-            "return a JSON object with keys: lookbook, styling_notes, complementary_items, checkout_instructions. "
-            "Each lookbook item must reference a product id and include a short reason and matching occasion."
+            "You are an expert personal shopper assistant. "
+            "You MUST ONLY use the provided catalog items. "
+            "DO NOT infer gender. DO NOT introduce new products. "
+            "Return JSON with keys: lookbook, styling_notes, complementary_items, checkout_instructions."
         )
 
         user_prompt = (
             f"User request: {user_request}\n\n"
-            f"Catalog snippets:\n" + "\n".join(ctx_items) + "\n\n"
-            f"Conversation history (most recent 5 messages):\n" + "\n".join(chat_history[-10:]) + "\n\n"
-            "Return only JSON parsable output."
+            f"Catalog:\n" + "\n".join(ctx_items) + "\n\n"
+            "Return ONLY valid JSON."
         )
 
-        # Call LLM
         if OPENAI_API_KEY:
             resp = openai.ChatCompletion.create(
-                model="gpt-4o-mini",  # choose a chat model available; replace if not available
+                model="gpt-4o-mini",
                 messages=[
-                    {"role":"system","content":system},
-                    {"role":"user","content":user_prompt}
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=450,
-                temperature=0.25
+                temperature=0.2,
+                max_tokens=450
             )
             content = resp["choices"][0]["message"]["content"]
         else:
-            # Minimal fallback: build a basic JSON from first 4 items
             items = []
             for p in retrieved_products[:4]:
-                if p:
+                if p and self._gender_matches(p, gender_intent):
                     items.append({
                         "product_id": p["id"],
                         "title": p["title"],
-                        "reason": "Well matched to the user's requested style and occasion.",
+                        "reason": "Matches requested style and gender intent.",
+                        "occasion": "Recommended use",
                         "price": p["price"]
                     })
-            out = {
+            content = json.dumps({
                 "lookbook": items,
-                "styling_notes": "Mix textures and pick neutral shoes. Consider a lightweight coat for chilly evenings.",
-                "complementary_items": [{"title": "Travel steamer", "reason": "Keep garments crease-free"}],
-                "checkout_instructions": "Add items to cart and proceed to checkout."
-            }
-            content = json.dumps(out)
+                "styling_notes": "Keep colors consistent and proportions balanced.",
+                "complementary_items": [],
+                "checkout_instructions": "Proceed to checkout."
+            })
 
-        # ensure valid JSON
-        try:
-            parsed = json.loads(content)
-        except Exception:
-            # attempt to salvage by finding first `{` and last `}`
-            start = content.find("{")
-            end = content.rfind("}")
-            parsed = {}
-            if start != -1 and end != -1:
-                try:
-                    parsed = json.loads(content[start:end+1])
-                except:
-                    parsed = {
-                        "lookbook": [],
-                        "styling_notes": content[:500],
-                        "complementary_items": [],
-                        "checkout_instructions": ""
-                    }
+        parsed = json.loads(content)
+
+        lb_ids = sorted(str(i.get("product_id")) for i in parsed.get("lookbook", []))
+        lb_hash = hashlib.md5("|".join(lb_ids).encode()).hexdigest()
+
+        if lb_hash in self.used_lookbooks:
+            parsed["lookbook"] = parsed["lookbook"][::-1]
+
+        self.used_lookbooks.add(lb_hash)
         return parsed
 
-    # Simple post-purchase recommender: recommend complementary items based on purchased categories
+    # -------------------------------------------------
+    # Post-purchase recommendations (gender locked)
+    # -------------------------------------------------
     def post_purchase_recommendations(self, purchased_items, top_n=3):
-        cats = {}
-        for it in purchased_items:
-            cats[it.get("category","other")] = cats.get(it.get("category","other"),0)+1
-        # choose top category
-        top_cat = sorted(cats.items(), key=lambda x:-x[1])[0][0] if cats else None
-        if not top_cat:
+        if not purchased_items:
             return []
-        # ask retrieve for "complementary to {top_cat}"
+
+        gender = self._detect_gender_intent(
+            " ".join(i.get("category", "") for i in purchased_items)
+        )
+
+        top_cat = purchased_items[0].get("category", "")
         q = f"complementary items for {top_cat}"
+
         recs, _ = self.retrieve(q, k=8)
-        return [r for r in recs if r][:top_n]
+        return [r for r in recs if self._gender_matches(r, gender)][:top_n]

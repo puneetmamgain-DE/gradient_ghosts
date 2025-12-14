@@ -8,63 +8,172 @@ import json
 st.set_page_config(layout="wide", page_title="AI Personal Shopper — Hyper-Personalized")
 
 # ---------------------------------------------------------
-# Fancy Animated Background + UI
+# Premium Shopping Theme CSS + 3D Sparkle Headline
 # ---------------------------------------------------------
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap');
 
-body {
-    background: linear-gradient(135deg, #0a0f24, #081229, #0b0f2e, #0a1f3e);
-    background-size: 400% 400%;
-    animation: bgMove 15s ease infinite;
-}
-
-@keyframes bgMove {
-    0% {background-position: 0% 50%;}
-    50% {background-position: 100% 50%;}
-    100% {background-position: 0% 50%;}
-}
-
-h1 {
-    text-align: center;
+html, body, [class*="css"] {
     font-family: 'Poppins', sans-serif;
-    font-size: 45px;
+    color: #f4f6fb;
+}
+
+/* App background */
+body {
+    background: linear-gradient(135deg, #0f172a, #111827, #020617);
+    background-attachment: fixed;
+}
+
+/* Main content container */
+section.main > div {
+    background: rgba(255, 255, 255, 0.02);
+    padding: 2rem;
+    border-radius: 18px;
+}
+
+/* Sidebar */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #020617, #020617);
+    border-right: 1px solid rgba(255,255,255,0.08);
+}
+
+/* ---------------------------------------------------
+   🔥 3D SPARKLING HEADLINE
+--------------------------------------------------- */
+
+.hero-wrapper {
+    perspective: 1200px;
+    text-align: center;
+    margin-bottom: 2.5rem;
+    position: relative;
+}
+
+.hero-title {
+    font-size: 44px;
     font-weight: 800;
-    background: linear-gradient(90deg, #ff00c8, #00eaff, #ff9d00, #00ff6a);
-    background-size: 400%;
+    letter-spacing: 0.5px;
+    background: linear-gradient(
+        120deg,
+        #fde68a,
+        #fb7185,
+        #38bdf8,
+        #a78bfa
+    );
+    background-size: 300% 300%;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    animation: textGlow 5s infinite linear;
+
+    transform-style: preserve-3d;
+    animation:
+        float3d 6s ease-in-out infinite,
+        gradientShift 8s ease infinite;
+    position: relative;
 }
 
-@keyframes textGlow {
-    0% {background-position: 0%;}
-    50% {background-position: 100%;}
-    100% {background-position: 0%;}
+/* Glow layer */
+.hero-title::after {
+    content: attr(data-text);
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, #facc15, #fb7185, #38bdf8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: blur(18px);
+    opacity: 0.65;
+    z-index: -1;
 }
 
+/* Sparkles */
+.sparkle {
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    background: radial-gradient(circle, #fff, transparent 70%);
+    border-radius: 50%;
+    animation: sparkle 3s linear infinite;
+    opacity: 0.8;
+}
+
+.sparkle:nth-child(1) { top: -10px; left: 20%; animation-delay: 0s; }
+.sparkle:nth-child(2) { top: 10px; left: 80%; animation-delay: 0.5s; }
+.sparkle:nth-child(3) { top: 60%; left: -10px; animation-delay: 1s; }
+.sparkle:nth-child(4) { top: 70%; left: 95%; animation-delay: 1.5s; }
+.sparkle:nth-child(5) { top: 100%; left: 40%; animation-delay: 2s; }
+
+/* Animations */
+@keyframes float3d {
+    0% {
+        transform: rotateX(0deg) rotateY(0deg) translateZ(0);
+    }
+    50% {
+        transform: rotateX(6deg) rotateY(-6deg) translateZ(18px);
+    }
+    100% {
+        transform: rotateX(0deg) rotateY(0deg) translateZ(0);
+    }
+}
+
+@keyframes gradientShift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+@keyframes sparkle {
+    0% {
+        transform: scale(0.3);
+        opacity: 0;
+    }
+    50% {
+        opacity: 1;
+    }
+    100% {
+        transform: scale(1.6);
+        opacity: 0;
+    }
+}
+
+/* Buttons */
+.stButton > button {
+    background: linear-gradient(135deg, #facc15, #fb7185);
+    color: #020617;
+    font-weight: 600;
+    border-radius: 10px;
+    padding: 0.55rem 1rem;
+    border: none;
+    transition: all 0.25s ease;
+}
+
+.stButton > button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 22px rgba(250,204,21,0.35);
+}
+
+/* Cards */
 .float-card {
-    transition: 0.3s;
-    transform: perspective(800px) rotateX(5deg) rotateY(-5deg);
-}
-.float-card:hover {
-    transform: perspective(800px) rotateX(0deg) rotateY(0deg) scale(1.05);
-    box-shadow: 0px 12px 35px rgba(255, 0, 200, 0.35);
+    background: rgba(255,255,255,0.04);
+    border-radius: 18px;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+    transition: all 0.3s ease;
+    border: 1px solid rgba(255,255,255,0.08);
 }
 
-img {
-    border-radius: 15px !important;
-    transition: transform .5s ease, box-shadow .3s ease;
-}
-img:hover {
-    transform: scale(1.08) rotateX(7deg);
-    box-shadow: 0px 10px 25px rgba(0, 255, 255, 0.4);
+.float-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 14px 32px rgba(0,0,0,0.6);
 }
 </style>
 
-<h1>⚡ AI Hyper-Personalized Shopping Assistant ⚡</h1>
+<div class="hero-wrapper">
+    <div class="hero-title" data-text="🛍️ AI Hyper-Personalized Shopping Assistant">
+        🛍️ AI Hyper-Personalized Shopping Assistant
+    </div>
+
+</div>
 """, unsafe_allow_html=True)
+
 
 # ---------------------------------------------------------
 # Initialization
@@ -91,7 +200,6 @@ products_df = load_products("sample_data/products.csv")
 with st.sidebar:
     st.title("🎯 Preferences")
 
-    # Detect changes in preferences
     def preference_changed():
         st.session_state.refresh_lookbook = True
 
@@ -135,7 +243,6 @@ if st.session_state.get("refresh_lookbook", False) and st.session_state.get("his
     agent = st.session_state.agent
     retrieved, sims = agent.retrieve(query, k=12)
 
-    # Apply budget filter
     filtered = []
     for item in retrieved:
         p = fetch_product_by_id(item["id"])
@@ -164,16 +271,14 @@ def get_image_path(product):
     return os.path.join(os.getcwd(), path)
 
 # -----------------------
-# Main Layout: Left - Chat
+# Main Layout
 # -----------------------
 col1, col2 = st.columns([2, 3])
+
 with col1:
     st.header("💬 Chat with Your Shopper")
     for role, text in st.session_state.history:
-        if role == "user":
-            st.markdown(f"**You:** {text}")
-        else:
-            st.markdown(f"**Assistant:** {text}")
+        st.markdown(f"**{'You' if role=='user' else 'Assistant'}:** {text}")
 
     user_input = st.text_input(
         "Tell me what you need (e.g. 'Outfit for chilly outdoor wedding')",
@@ -189,7 +294,6 @@ with col1:
         agent = st.session_state.agent
         retrieved, sims = agent.retrieve(query, k=12)
 
-        # Apply budget filter
         filtered = []
         for item in retrieved:
             p = fetch_product_by_id(item["id"])
@@ -203,12 +307,9 @@ with col1:
         )
 
         st.session_state.last_lookbook = parsed
-        st.session_state.history.append(("assistant", "✨ Your curated 3D lookbook is ready — scroll right!"))
+        st.session_state.history.append(("assistant", "✨ Your curated lookbook is ready — scroll right!"))
         rerun()
 
-# -----------------------
-# Main Layout: Right - Lookbook
-# -----------------------
 with col2:
     st.header("👗 Curated Lookbook")
     lookbook = st.session_state.get("last_lookbook", {})
@@ -219,49 +320,26 @@ with col2:
         for it in items_raw:
             pid = it.get("product_id") or it.get("id")
             product = fetch_product_by_id(pid)
-            if not product:
-                continue
-            price = float(product.get("price", 0))
-            if budget_min <= price <= budget_max:
-                items.append(it)
+            if product:
+                price = float(product.get("price", 0))
+                if budget_min <= price <= budget_max:
+                    items.append((it, product))
 
-        if not items:
-            st.write("No items found inside your selected budget range.")
-        else:
-            lookbook_products = []
-            for it in items:
-                pid = it.get("product_id") or it.get("id")
-                product = fetch_product_by_id(pid)
-                if product:
-                    product["image_path"] = get_image_path(product)
-                    lookbook_products.append((it, product))
-
-            cols = st.columns(2)
-            for i, (it, product) in enumerate(lookbook_products):
-                col = cols[i % 2]
-                with col:
-                    st.markdown('<div class="float-card">', unsafe_allow_html=True)
-                    st.image(product.get("image_path"), width=260)
-                    st.markdown(f"**{product.get('title', 'No Title')}**")
-                    st.write(f"${product.get('price', '0.00')} • {product.get('category', 'N/A')}")
-                    st.write(it.get("reason", ""))
-                    st.markdown("</div>", unsafe_allow_html=True)
-                    if st.button("Add to cart", key=f"add_{product.get('id', i)}"):
-                        st.session_state.cart.append(product)
-                        st.success("Added to cart!")
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown("---")
-        st.subheader("✨ Styling Notes")
-        st.write(lookbook.get("styling_notes", ""))
-        st.subheader("🧩 Complementary Items")
-        for c in lookbook.get("complementary_items", []):
-            st.write(f"- {c.get('title')} — {c.get('reason', '')}")
-        st.markdown("---")
-        st.subheader("🧾 Checkout Instructions")
-        st.write(lookbook.get("checkout_instructions", ""))
+        cols = st.columns(2)
+        for i, (it, product) in enumerate(items):
+            with cols[i % 2]:
+                st.markdown('<div class="float-card">', unsafe_allow_html=True)
+                st.image(get_image_path(product), width=260)
+                st.markdown(f"**{product['title']}**")
+                st.write(f"${product['price']} • {product.get('category','N/A')}")
+                st.write(it.get("reason", ""))
+                if st.button("Add to cart", key=f"add_{product['id']}"):
+                    st.session_state.cart.append(product)
+                    st.success("Added to cart!")
+                st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.write("Ask for an outfit on the left!")
+
 
 # -----------------------
 # Checkout

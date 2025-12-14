@@ -3,8 +3,7 @@ import csv
 import os
 import time
 import requests
-from random import choice, uniform, randint
-from urllib.parse import quote_plus
+from random import choice, uniform
 import logging
 import sys
 
@@ -14,18 +13,57 @@ OUT = "sample_data"
 os.makedirs(OUT, exist_ok=True)
 F = os.path.join(OUT, "products.csv")
 
+# --------------------------
+# Categories and templates
+# --------------------------
 categories = {
-    "Women's Dresses": ["maxi dress", "cocktail dress", "wrap dress", "midi dress"],
-    "Men's Suits": ["two-piece suit", "blazer", "tuxedo", "morning coat"],
+    "Women's Dresses": ["maxi dress", "cocktail dress", "wrap dress", "midi dress","off shoulders"],
+    "Men": ["two-piece suit", "blazer", "tuxedo", "morning coat","tshirt","pants"],
     "Outerwear": ["wool coat", "pea coat", "trench coat", "puffer jacket"],
-    "Accessories": ["clutch", "leather belt", "silk scarf", "statement necklace"],
+    "Accessories": ["clutch", "leather belt", "silk scarf", "statement necklace","bracelets"],
     "Shoes": ["heels", "oxfords", "loafers", "boots"]
 }
 
-colors = ["navy", "black", "ivory", "emerald", "burgundy", "charcoal", "tan", "blush", "pink"]
+# --------------------------
+# Category aliases
+# --------------------------
+CATEGORY_ALIASES = {
+    "men": "Men",
+    "man": "Men",
+    "mens": "Men",
+    "men's": "Men",
+    "boy": "Men",
+    "boys": "Men",
+    "women": "Women's Dresses",
+    "woman": "Women's Dresses",
+    "womens": "Women's Dresses",
+    "women's": "Women's Dresses",
+    "girl": "Women's Dresses",
+    "girls": "Women's Dresses",
+    "outerwear": "Outerwear",
+    "coat": "Outerwear",
+    "jackets": "Outerwear",
+    "accessories": "Accessories",
+    "shoes": "Shoes",
+    "heels": "Shoes",
+    "boots": "Shoes",
+    # Add more aliases if needed
+}
+
+def normalize_category(query):
+    """Convert any alias to the canonical category"""
+    q = str(query).lower().strip()
+    return CATEGORY_ALIASES.get(q, query)
+
+# --------------------------
+# Colors and materials
+# --------------------------
+colors = ["navy", "black", "ivory", "emerald", "burgundy", "charcoal", "tan", "blush", "pink","blue"]
 materials = ["wool", "silk", "cotton", "linen", "polyester blend", "suede", "leather"]
 
-# Pexels API settings
+# --------------------------
+# Pexels API setup
+# --------------------------
 PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY")
 if not PEXELS_API_KEY:
     logging.error("Environment variable PEXELS_API_KEY not set. Please export your Pexels API key and rerun.")
@@ -37,11 +75,11 @@ SEARCH_ENDPOINT = f"{PEXELS_API_BASE}/search"
 CURATED_ENDPOINT = f"{PEXELS_API_BASE}/curated"
 HEADERS = {"Authorization": PEXELS_API_KEY}
 
-# helper: choose best src url from a photo object
+# --------------------------
+# Helper functions
+# --------------------------
 def choose_best_src(photo):
-    # Pexels provides multiple sizes in photo['src']
     src = photo.get("src", {})
-    # prefer higher quality sizes, fallback down
     for key in ("original", "large2x", "large", "medium", "small"):
         if key in src and src[key]:
             return src[key]
@@ -50,8 +88,7 @@ def choose_best_src(photo):
 def pexels_search_image_url(query, per_page=3, sleep_between=0.2):
     """
     Search Pexels for 'query' and return the best image URL.
-    If no results, falls back to curated photos endpoint (first photo).
-    Returns None on error.
+    If no results, falls back to curated photos endpoint.
     """
     q = str(query).strip()
     params = {"query": q, "per_page": per_page, "page": 1}
@@ -65,7 +102,6 @@ def pexels_search_image_url(query, per_page=3, sleep_between=0.2):
         data = resp.json()
         photos = data.get("photos", [])
         if photos:
-            # pick a random photo from the top results for variety, but you can choose index 0 for determinism
             photo = choice(photos)
             url = choose_best_src(photo)
             if url:
@@ -73,17 +109,13 @@ def pexels_search_image_url(query, per_page=3, sleep_between=0.2):
                 return url
             else:
                 logging.debug("No src found in selected photo for query '%s'", q)
-        else:
-            logging.debug("No search results for '%s' (status 200). Trying curated fallback.", q)
     else:
-        # handle common errors (401 unauthorized, 429 rate limit, etc.)
         logging.warning("Pexels API returned %s for query '%s': %s", resp.status_code, q, resp.text)
-        # If unauthorized (401), it's likely the API key is wrong/expired
         if resp.status_code == 401:
-            logging.error("Unauthorized: check your PEXELS_API_KEY. Pexels expects the key directly in the Authorization header.")
+            logging.error("Unauthorized: check your PEXELS_API_KEY.")
         return None
 
-    # fallback: try curated photos endpoint and pick first
+    # fallback: curated endpoint
     try:
         resp2 = requests.get(CURATED_ENDPOINT, headers=HEADERS, params={"per_page": 1, "page": 1}, timeout=10)
     except requests.RequestException as e:
@@ -103,6 +135,9 @@ def pexels_search_image_url(query, per_page=3, sleep_between=0.2):
 
     return None
 
+# --------------------------
+# Generate product rows
+# --------------------------
 rows = []
 id_counter = 1
 total_per_category = 50  # configurable
@@ -117,17 +152,19 @@ for cat, templates in categories.items():
                 "and suitable for semi-formal events. Lightweight, breathable, and tailored fit.")
         price = round(uniform(39.99, 499.99), 2)
 
-        # Build a focused query for Pexels
-        img_q = f"{cat} {template} {color}"
-        # get image URL from Pexels API
+        # normalize category using aliases for search
+        cat_normalized = normalize_category(cat)
+        img_q = f"{cat_normalized} {template} {color}"
         img_url = pexels_search_image_url(img_q)
         if not img_url:
-            # If Pexels search failed, create a conservative placeholder (still Pexels domain if possible),
-            # but prefer None to indicate no image.
             logging.warning("Could not fetch Pexels image for '%s' — leaving image_url blank for id %d.", img_q, id_counter)
             img_url = ""
 
-        attrs = {"color": color, "material": mat, "occasion": "semi-formal" if "dress" in template or "suit" in template else "casual"}
+        attrs = {
+            "color": color,
+            "material": mat,
+            "occasion": "semi-formal" if "dress" in template or "suit" in template else "casual"
+        }
         rows.append({
             "id": str(id_counter),
             "title": title,
@@ -139,7 +176,9 @@ for cat, templates in categories.items():
         })
         id_counter += 1
 
-# write CSV
+# --------------------------
+# Write CSV
+# --------------------------
 with open(F, "w", newline="", encoding="utf-8") as fh:
     writer = csv.DictWriter(fh, fieldnames=["id","title","category","description","price","image_url","attributes"])
     writer.writeheader()
