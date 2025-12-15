@@ -1,10 +1,9 @@
-# agent.py
 import os
 import json
+import re
 import openai
-from utils import load_faiss_index, fetch_product_by_id, get_embeddings, topk_products_from_index
 import numpy as np
-import hashlib
+from utils import load_faiss_index, fetch_product_by_id, get_embeddings, topk_products_from_index
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if OPENAI_API_KEY:
@@ -13,192 +12,177 @@ if OPENAI_API_KEY:
 
 class ShoppingAgent:
     def __init__(self, index_path_openai="product_index_openai.faiss",
-                       index_path_local="product_index_local.faiss",
-                       meta_db="products_meta.db",
-                       emb_method="openai"):
+                 index_path_local="product_index_local.faiss",
+                 emb_method="openai"):
         self.emb_method = emb_method
-        self.meta_db = meta_db
+        self.index_openai = load_faiss_index(index_path_openai)
+        self.index_local = load_faiss_index(index_path_local)
 
-        self.index_openai = load_faiss_index(index_path_openai) if index_path_openai and os.path.exists(index_path_openai) else None
-        self.index_local = load_faiss_index(index_path_local) if index_path_local and os.path.exists(index_path_local) else None
+        self.index = self.index_openai if emb_method == "openai" else self.index_local
+        # Module 4: Agent Identity "Kai"
+        self.name = "Kai"
 
-        self.index_map = {
-            "openai": self.index_openai,
-            "local": self.index_local
-        }
+        # -------------------------------------------------
 
-        if self.index_map[emb_method] is None:
-            raise ValueError(f"No FAISS index found for emb_method='{emb_method}'")
-
-        self.index = self.index_map[emb_method]
-        self.used_lookbooks = set()
-        print(f"[ShoppingAgent] Using {emb_method} embeddings with index dim={self.index.d}")
+    # Module 2: Sentiment-Based Triage
+    # -------------------------------------------------
+    def _detect_sentiment(self, text):
+        negatives = ["angry", "bad", "hate", "wrong", "broken", "terrible", "return", "stupid"]
+        if any(w in text.lower() for w in negatives):
+            return "negative"
+        return "neutral"
 
     # -------------------------------------------------
-    # Gender intent detection (USER INTENT ONLY)
-    # -------------------------------------------------
-    def _detect_gender_intent(self, text: str):
-        t = text.lower()
-
-        men_aliases = [
-            "men", "man", "male", "mens", "men's", "boys", "boy", "gents", "gentlemen"
-        ]
-        women_aliases = [
-            "women", "woman", "female", "womens", "women's", "girls", "girl", "ladies"
-        ]
-
-        men_hit = any(a in t for a in men_aliases)
-        women_hit = any(a in t for a in women_aliases)
-
-        if men_hit and not women_hit:
-            return "men"
-        if women_hit and not men_hit:
-            return "women"
-        return None  # gender not requested
-
-    # -------------------------------------------------
-    # HARD gender gate (ABSOLUTE, NO LEAKAGE)
-    # -------------------------------------------------
-    def _gender_matches(self, product, gender):
-        cat = product.get("category", "").lower()
-        attrs = json.dumps(product.get("attributes", "")).lower()
-        text = f"{cat} {attrs}"
-
-        men_terms = ["men", "man", "male", "mens", "men's", "gents", "boy"]
-        women_terms = ["women", "woman", "female", "womens", "women's", "ladies", "girl"]
-
-        # USER ASKED FOR MEN → WOMEN MUST NEVER PASS
-        if gender == "men":
-            if any(w in text for w in women_terms):
-                return False
-            return any(m in text for m in men_terms)
-
-        # USER ASKED FOR WOMEN → MEN MUST NEVER PASS
-        if gender == "women":
-            if any(m in text for m in men_terms):
-                return False
-            return any(w in text for w in women_terms)
-
-        # NO GENDER INTENT → ALLOW ALL
-        return True
-
-    # -------------------------------------------------
-    # Retrieval with strict gender enforcement
+    # Retrieval Logic
     # -------------------------------------------------
     def retrieve(self, text, k=8):
-        gender_intent = self._detect_gender_intent(text)
+        if not self.index:
+            return [], []  # Safety if index not built
 
         emb = get_embeddings([text], model=self.emb_method)[0]
         emb = np.ascontiguousarray(emb, dtype=np.float32)
 
-        if emb.shape[0] != self.index.d:
-            raise ValueError(
-                f"Embedding dimension {emb.shape[0]} does not match FAISS index dimension {self.index.d}."
-            )
-
-        ids, sims = topk_products_from_index(self.index, emb, k=k * 4)
+        ids, sims = topk_products_from_index(self.index, emb, k=k)
 
         products = []
-        scores = []
-
-        for pid, score in zip(ids, sims):
+        for pid in ids:
+            # Assuming IDs in FAISS are 0-indexed, CSV is 1-indexed usually
             p = fetch_product_by_id(str(pid + 1))
-            if not p:
-                continue
+            if p: products.append(p)
 
-            if not self._gender_matches(p, gender_intent):
-                continue
-
-            products.append(p)
-            scores.append(score)
-
-            if len(products) >= k:
-                break
-
-        return products, scores
+        return products, sims
 
     # -------------------------------------------------
-    # Lookbook generation (gender-safe + unique)
+    # Module 2, 4, 5: Lookbook & Chat Generation
+    # Multi-Turn Dialogue Capability Added
     # -------------------------------------------------
-    def generate_lookbook(self, user_request, retrieved_products, chat_history):
-        gender_intent = self._detect_gender_intent(user_request)
+    def generate_lookbook(self, user_request, retrieved_products, chat_history=[], raw_input=""):
+        """
+        Generates structured JSON response including a chat message from 'Kai'.
+        Uses raw_input to detect vagueness correctly.
+        """
+        sentiment = self._detect_sentiment(user_request)
 
+        # --- NEW: Budget Extraction Logic ---
+        # Look for numbers in the input (e.g., "200", "$150", "under 300")
+        budget_limit = None
+        numbers = re.findall(r'\d+', raw_input)
+        if numbers:
+            # Take the largest number found that is reasonable for a price (>20)
+            potential_budgets = [int(n) for n in numbers if int(n) > 20]
+            if potential_budgets:
+                budget_limit = max(potential_budgets)
+                # Apply Filter: Keep only items <= budget_limit
+                retrieved_products = [p for p in retrieved_products if p['price'] <= budget_limit]
+
+        # Serialize product context
         ctx_items = []
         for p in retrieved_products:
-            if not p:
-                continue
-            if not self._gender_matches(p, gender_intent):
-                continue
-            ctx_items.append(
-                f"- ID:{p['id']} | {p['title']} | ${p['price']} | {p['category']} | {p['attributes']}"
-            )
+            ctx_items.append(f"- ID:{p['id']} | {p['title']} | ${p['price']} | {p['category']} | {p['attributes']}")
 
-        system = (
-            "You are an expert personal shopper assistant. "
-            "You MUST ONLY use the provided catalog items. "
-            "DO NOT infer gender. DO NOT introduce new products. "
-            "Return JSON with keys: lookbook, styling_notes, complementary_items, checkout_instructions."
+        # Prepare Chat History for context
+        history_context = ""
+        if chat_history:
+            for role, text in chat_history[-6:]:  # More history for context
+                history_context += f"{role.capitalize()}: {text}\n"
+
+        # Module 4: System Prompt with Persona "Kai"
+        # UPDATED: Explicit "Slot Filling" Instructions to match user example
+        system_prompt = (
+            f"You are {self.name}, a futuristic, empathetic, and intelligent shopping assistant for 'Vestra'.\n"
+            "**YOUR MODE: SLOT FILLING**\n"
+            "You must NOT recommend products until you have gathered specific details from the user.\n"
+            "**Required Details (Slots):**\n"
+            "1. Item Type (e.g., Dress, Shoes)\n"
+            "2. Style (e.g., A-line, Maxi, Sneaker)\n"
+            "3. Budget (e.g., Under $150)\n"
+            "4. Occasion/Fabric/Color (e.g., Wedding, Silk, Blue)\n\n"
+            "**Conversation Flow Rules:**\n"
+            "- IF the user just says 'I need a dress', ASK: 'Great! What style are you thinking of? What's your budget?'\n"
+            "- IF the user gives Style/Budget, ASK: 'Okay. Do you prefer specific colors/fabrics? What occasion is this for?'\n"
+            "- IF you have enough details (3+ slots filled), ONLY THEN return the 'lookbook' with items.\n"
+            "- OTHERWISE, return an EMPTY 'lookbook' [] and ask the next follow-up question.\n"
+            "- Handle negative sentiment with empathy and offer returns.\n"
+            "- Output ONLY valid JSON."
         )
 
         user_prompt = (
-            f"User request: {user_request}\n\n"
-            f"Catalog:\n" + "\n".join(ctx_items) + "\n\n"
-            "Return ONLY valid JSON."
+                f"Chat History:\n{history_context}\n"
+                f"Current User Input: {user_request}\n"
+                f"Sentiment Detected: {sentiment}\n"
+                f"Available Inventory (Filtered): \n" + "\n".join(ctx_items) + "\n\n"
+                                                                               "Task: Determine if you have enough info (Style, Budget, Occasion). If missing, ask. If complete, recommend."
+                                                                               "Return JSON format: { 'chat_response': 'string', 'lookbook': [ {'product_id': id, 'reason': 'short reason'} ] }"
         )
 
         if OPENAI_API_KEY:
-            resp = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.2,
-                max_tokens=450
-            )
-            content = resp["choices"][0]["message"]["content"]
-        else:
+            try:
+                resp = openai.ChatCompletion.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=500
+                )
+                content = resp["choices"][0]["message"]["content"]
+                if content.startswith("```json"):
+                    content = content.replace("```json", "").replace("```", "")
+                return json.loads(content)
+            except Exception as e:
+                print(f"LLM Error: {e}")
+                # Fallback below
+
+        # Fallback Logic (Autonomous / No LLM)
+        fallback_msg = f"I've found some great items for you, {self.name} here!"
+        items = []
+
+        # Check combined history for slots (Heuristic)
+        full_context = (history_context + " " + raw_input).lower()
+
+        has_item = any(w in full_context for w in ["dress", "shoe", "shirt", "pant", "jacket"])
+        has_budget = any(c in full_context for c in ["$", "dollar", "budget", "under", "price"])
+        has_style_occ = any(
+            w in full_context for w in ["formal", "casual", "wedding", "party", "office", "summer", "winter"])
+
+        if sentiment == "negative":
+            fallback_msg = f"I'm sorry to hear that. As {self.name}, I can process an instant return for you right now."
             items = []
+        elif not has_item:
+            fallback_msg = "I can certainly help! What kind of item are you looking for today?"
+            items = []
+        elif not has_budget and not has_style_occ:
+            fallback_msg = f"Great choice! To narrow it down, what style are you thinking of? And do you have a budget range?"
+            items = []  # Trigger follow-up
+        elif not has_style_occ:
+            fallback_msg = "Noted. What occasion is this for? Or do you have a specific color in mind?"
+            items = []  # Trigger follow-up
+        elif not has_budget:
+            fallback_msg = "Almost there! Do you have a price range or budget I should stick to?"
+            items = []  # Trigger follow-up
+        else:
+            # All slots filled (or close enough)
+            fallback_msg = "Perfect! Based on those details, here are my top recommendations."
             for p in retrieved_products[:4]:
-                if p and self._gender_matches(p, gender_intent):
-                    items.append({
-                        "product_id": p["id"],
-                        "title": p["title"],
-                        "reason": "Matches requested style and gender intent.",
-                        "occasion": "Recommended use",
-                        "price": p["price"]
-                    })
-            content = json.dumps({
-                "lookbook": items,
-                "styling_notes": "Keep colors consistent and proportions balanced.",
-                "complementary_items": [],
-                "checkout_instructions": "Proceed to checkout."
-            })
+                items.append({
+                    "product_id": p["id"],
+                    "reason": "Matches your criteria."
+                })
 
-        parsed = json.loads(content)
-
-        lb_ids = sorted(str(i.get("product_id")) for i in parsed.get("lookbook", []))
-        lb_hash = hashlib.md5("|".join(lb_ids).encode()).hexdigest()
-
-        if lb_hash in self.used_lookbooks:
-            parsed["lookbook"] = parsed["lookbook"][::-1]
-
-        self.used_lookbooks.add(lb_hash)
-        return parsed
+        return {
+            "chat_response": fallback_msg,
+            "lookbook": items
+        }
 
     # -------------------------------------------------
-    # Post-purchase recommendations (gender locked)
+    # Module 2: Post-Purchase / Bundle Recommendations
     # -------------------------------------------------
     def post_purchase_recommendations(self, purchased_items, top_n=3):
-        if not purchased_items:
-            return []
-
-        gender = self._detect_gender_intent(
-            " ".join(i.get("category", "") for i in purchased_items)
-        )
-
-        top_cat = purchased_items[0].get("category", "")
-        q = f"complementary items for {top_cat}"
-
-        recs, _ = self.retrieve(q, k=8)
-        return [r for r in recs if self._gender_matches(r, gender)][:top_n]
+        if not purchased_items: return []
+        cats = " ".join([i['category'] for i in purchased_items])
+        query = f"Accessories matching {cats}"
+        recs, _ = self.retrieve(query, k=top_n + 2)
+        purchased_ids = [str(i['id']) for i in purchased_items]
+        final = [r for r in recs if str(r['id']) not in purchased_ids][:top_n]
+        return final
