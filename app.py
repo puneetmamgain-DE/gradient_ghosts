@@ -1,11 +1,13 @@
-import streamlit as st
-from streamlit import rerun
-from agent import ShoppingAgent
-from utils import load_products, fetch_product_by_id, SizeConverter, RewardSystem, PolicyManager, WeatherService, \
-    GoogleReviewService, encode_image, TrendService, MaterialAnalyzer, CartOptimizer, ReplenishmentService, \
-    PriceLockService
 import os
 from datetime import datetime
+
+import streamlit as st
+from streamlit import rerun
+
+from agent import ShoppingAgent
+from utils import fetch_product_by_id, SizeConverter, RewardSystem, PolicyManager, WeatherService, \
+    GoogleReviewService, encode_image, TrendService, MaterialAnalyzer, CartOptimizer, ReplenishmentService, \
+    PriceLockService
 
 # ---------------------------------------------------------
 # Page Configuration
@@ -184,7 +186,7 @@ if "agent" not in st.session_state:
     )
 
 st.session_state.setdefault("history", [("assistant",
-                                         "Hi! I'm Kai. Upload a selfie for skin tone matching or just tell me what you need! Your prices will be Intent-Locked™.")])
+                                         "Hi! I'm Kai. Upload a selfie for skin tone matching or just tell me what you need! Your prices will be Intent-Locked.")])
 st.session_state.setdefault("cart", [])
 st.session_state.setdefault("orders", [])
 st.session_state.setdefault("last_lookbook", {})
@@ -216,7 +218,7 @@ with st.sidebar:
     st.progress(min(st.session_state.reward_points / 1000, 1.0))
 
     # --- INTENT-LOCKED PRICING: AUTO-REFUND SCAN ---
-    if st.button("🛡️ Scan for Price Drops", help="Intent-Locked Pricing™: Check if prices fell after you bought."):
+    if st.button("🛡️ Scan for Price Drops", help="Intent-Locked Pricing: Check if prices fell after you bought."):
         with st.spinner("Checking global market prices..."):
             refund_amt, details = PriceLockService.calculate_protection_refund(st.session_state.orders)
             if refund_amt > 0:
@@ -421,7 +423,7 @@ if lookbook and "lookbook" in lookbook and len(lookbook["lookbook"]) > 0:
                 st.caption(f"✨ {item.get('reason', 'AI Match')}")
 
                 # PRICE DISPLAY WITH LOCK ICON
-                st.markdown(f"**${product['price']}** <span class='lock-badge'>Intent-Locked™</span>",
+                st.markdown(f"**${product['price']}** <span class='lock-badge'>Intent-Locked</span>",
                             unsafe_allow_html=True)
 
                 if st.button("➕ Add & Lock Price", key=f"add_{pid}"):
