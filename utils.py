@@ -12,7 +12,59 @@ from datetime import datetime, timedelta
 
 
 # -------------------------------------------------
-# Module 12: Trend Forecasting Service (New)
+# Module 15: Intent-Locked Pricing Service (New)
+# -------------------------------------------------
+class PriceLockService:
+    """
+    Manages Intent-Locked Pricing™.
+    1. Locks price on intent (Cart Add).
+    2. Simulates market fluctuations.
+    3. Calculates refunds if current price < locked price.
+    """
+
+    @staticmethod
+    def get_market_price(original_price):
+        """
+        Simulates a live market price check.
+        In a real app, this would hit an API.
+        Here, we randomly simulate a price drop for demonstration.
+        """
+        # 30% chance that the market price has dropped significantly
+        if random.random() > 0.7:
+            # Drop price by 5% to 20%
+            discount_factor = random.uniform(0.80, 0.95)
+            return round(original_price * discount_factor, 2)
+
+        # Otherwise price stays same or goes up (but lock protects user from increase)
+        return original_price
+
+    @staticmethod
+    def calculate_protection_refund(orders):
+        """
+        Scans past orders to see if price dropped within X days.
+        Returns total refund amount.
+        """
+        total_refund = 0.0
+        refund_details = []
+
+        for order in orders:
+            # Check if order is within 30 days (Intent Lock duration)
+            # Assuming order['date'] is a date object
+            if (datetime.now().date() - order['date']).days <= 30:
+                for item in order['items']:
+                    locked_price = item.get('locked_price', item['price'])
+                    current_market = PriceLockService.get_market_price(locked_price)
+
+                    if current_market < locked_price:
+                        diff = locked_price - current_market
+                        total_refund += diff
+                        refund_details.append(f"{item['title']}: Dropped to ${current_market}")
+
+        return round(total_refund, 2), refund_details
+
+
+# -------------------------------------------------
+# Module 12: Trend Forecasting Service
 # -------------------------------------------------
 class TrendService:
     """
@@ -41,7 +93,7 @@ class TrendService:
 
 
 # -------------------------------------------------
-# Module 13: Material & Fabric Analysis (New)
+# Module 13: Material & Fabric Analysis
 # -------------------------------------------------
 class MaterialAnalyzer:
     """
@@ -80,7 +132,7 @@ class MaterialAnalyzer:
 
 
 # -------------------------------------------------
-# Module 14: Cart Optimizer & Replenishment (New)
+# Module 14: Cart Optimizer & Replenishment
 # -------------------------------------------------
 class CartOptimizer:
     @staticmethod

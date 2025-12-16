@@ -120,7 +120,10 @@ class ShoppingAgent:
             "3. **CRITICAL:** Use the 'Ext Rating' provided in the inventory to highlight the best-fit items.\n"
             "   - If an item has a high external rating (4.5+), mention it as 'highly rated online' or 'customer favorite'.\n"
             f"{skin_instruction}"
-            "4. Return valid JSON."
+            "4. **USP: Intent-Locked Pricing™**\n"
+            "   - Remind the user that adding items to the cart LOCKS the price today."
+            "   - If the price drops in the next 30 days, they get an auto-refund."
+            "5. Return valid JSON."
         )
 
         user_prompt = (
@@ -150,7 +153,7 @@ class ShoppingAgent:
                 print(f"LLM Error: {e}")
 
         # Fallback Logic (Autonomous)
-        fallback_msg = f"I've found some great items for you!"
+        fallback_msg = f"I've found some great items for you! Plus, your price is locked the moment you decide."
         items = []
         full_context = (history_context + " " + raw_input).lower()
 
@@ -170,7 +173,7 @@ class ShoppingAgent:
         elif not has_budget:
             fallback_msg = "Do you have a price range?"
         else:
-            fallback_msg = "Here are my top recommendations based on internal matches and external web reviews."
+            fallback_msg = "Here are my top recommendations based on internal matches and external web reviews. Prices are locked!"
             # Sort by external rating if available in fallback mode
             sorted_prods = sorted(retrieved_products, key=lambda x: x.get('ext_rating', 0), reverse=True)
             for p in sorted_prods[:4]:

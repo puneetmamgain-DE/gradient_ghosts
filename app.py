@@ -2,7 +2,8 @@ import streamlit as st
 from streamlit import rerun
 from agent import ShoppingAgent
 from utils import load_products, fetch_product_by_id, SizeConverter, RewardSystem, PolicyManager, WeatherService, \
-    GoogleReviewService, encode_image, TrendService, MaterialAnalyzer, CartOptimizer, ReplenishmentService
+    GoogleReviewService, encode_image, TrendService, MaterialAnalyzer, CartOptimizer, ReplenishmentService, \
+    PriceLockService
 import os
 from datetime import datetime
 
@@ -16,7 +17,7 @@ st.set_page_config(layout="wide", page_title="Vestra — Intelligent Shopping")
 # ---------------------------------------------------------
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600&family=Rajdhani:wght@500;700&display=swap');
+@import url('[https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600&family=Rajdhani:wght@500;700&display=swap](https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600&family=Rajdhani:wght@500;700&display=swap)');
 
 @keyframes gradient-animation {
     0% { background-position: 0% 50%; }
@@ -143,6 +144,15 @@ st.markdown("""
     border-radius: 18px 18px 18px 2px; margin-bottom: 10px; float: left; clear: both; max-width: 85%;
     border: 1px solid rgba(255,255,255,0.1);
 }
+.lock-badge {
+    background: rgba(34, 197, 94, 0.2);
+    border: 1px solid #22c55e;
+    color: #22c55e;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    margin-left: 5px;
+}
 </style>
 
 <div style="text-align: center; perspective: 1000px;">
@@ -174,7 +184,7 @@ if "agent" not in st.session_state:
     )
 
 st.session_state.setdefault("history", [("assistant",
-                                         "Hi! I'm Kai. Upload a selfie for skin tone matching or just tell me what you need!")])
+                                         "Hi! I'm Kai. Upload a selfie for skin tone matching or just tell me what you need! Your prices will be Intent-Locked™.")])
 st.session_state.setdefault("cart", [])
 st.session_state.setdefault("orders", [])
 st.session_state.setdefault("last_lookbook", {})
@@ -187,7 +197,6 @@ st.session_state.setdefault("skin_profile", None)  # Store skin analysis result
 # ---------------------------------------------------------
 with st.sidebar:
     st.header("🌐 Region & Settings")
-    st.caption("Auto-detecting locale and currency")
 
     detected_country = st.session_state.weather_context.get("country", "US")
     region_options = ["US", "EU", "UK", "JP"]
@@ -202,9 +211,23 @@ with st.sidebar:
     st.success(f"📍 Detected: {st.session_state.weather_context.get('city', 'Bhubaneswar')}")
 
     st.markdown("---")
-    st.header("💎 Rewards")
+    st.header("💎 Rewards & Protection")
     st.metric("Loyalty XP", f"{st.session_state.reward_points}", delta=10)
     st.progress(min(st.session_state.reward_points / 1000, 1.0))
+
+    # --- INTENT-LOCKED PRICING: AUTO-REFUND SCAN ---
+    if st.button("🛡️ Scan for Price Drops", help="Intent-Locked Pricing™: Check if prices fell after you bought."):
+        with st.spinner("Checking global market prices..."):
+            refund_amt, details = PriceLockService.calculate_protection_refund(st.session_state.orders)
+            if refund_amt > 0:
+                # Refund via XP
+                xp_refund = int(refund_amt * 10)  # 1 USD = 10 XP
+                st.session_state.reward_points += xp_refund
+                st.success(f"💰 Refund Processed! ${refund_amt} credited as {xp_refund} XP.")
+                for d in details:
+                    st.caption(f"📉 {d}")
+            else:
+                st.info("No price drops detected. Your locked prices were the best.")
 
     st.markdown("---")
     st.header("🎯 Context Engine")
@@ -246,7 +269,10 @@ with st.sidebar:
         if st.button("💳 Checkout Now", type="primary", use_container_width=True):
             st.session_state.show_checkout = True
         for i, item in enumerate(st.session_state.cart):
-            if st.button(f"Remove {item['title'][:10]}...", key=f"rm_{i}"):
+            # Display Lock Status in Cart
+            lock_msg = f"🔒 Locked @ ${item['price']}"
+            st.markdown(f"**{item['title'][:15]}..** ({lock_msg})")
+            if st.button(f"Remove {item['title'][:5]}..", key=f"rm_{i}"):
                 st.session_state.cart.pop(i)
                 rerun()
     else:
@@ -393,11 +419,18 @@ if lookbook and "lookbook" in lookbook and len(lookbook["lookbook"]) > 0:
                     st.caption(f"{warn}")
 
                 st.caption(f"✨ {item.get('reason', 'AI Match')}")
-                st.markdown(f"**${product['price']}**", unsafe_allow_html=True)
-                if st.button("➕ Add", key=f"add_{pid}"):
+
+                # PRICE DISPLAY WITH LOCK ICON
+                st.markdown(f"**${product['price']}** <span class='lock-badge'>Intent-Locked™</span>",
+                            unsafe_allow_html=True)
+
+                if st.button("➕ Add & Lock Price", key=f"add_{pid}"):
+                    # INTENT LOCK: Record the locked price
+                    product['locked_price'] = product['price']
+                    product['locked_date'] = datetime.now()
                     st.session_state.cart.append(product)
                     st.session_state.reward_points += 5
-                    st.toast(f"Added to cart!")
+                    st.toast(f"Price locked at ${product['price']}!")
                 st.markdown('</div>', unsafe_allow_html=True)
 else:
     st.info("Kai is analyzing current trends for you. Open the Chat to begin.")
@@ -416,6 +449,9 @@ if st.session_state.get("run_prediction"):
             with p_cols[i]:
                 st.info(f"Recommended: {r['title']}")
                 if st.button("Add Bundle", key=f"pred_add_{i}"):
+                    # Apply Lock on Bundle
+                    r['locked_price'] = r['price']
+                    r['locked_date'] = datetime.now()
                     st.session_state.cart.append(r)
                     rerun()
 
@@ -426,6 +462,7 @@ if st.session_state.get("run_prediction"):
         for item in replenish_items:
             st.warning(f"You last bought {item['title']} 30 days ago. Add to cart?")
             if st.button(f"Restock {item['title']}", key=f"restock_{item['id']}"):
+                item['locked_price'] = item['price']
                 st.session_state.cart.append(item)
                 rerun()
     elif not st.session_state.orders:
@@ -473,6 +510,8 @@ if st.session_state.get("show_checkout"):
     final_total = subtotal + shipping_cost
 
     st.sidebar.markdown(f"**Total:** :green[${final_total:.2f}]")
+    st.sidebar.info("🔒 Intent-Locked Pricing Active. If price drops in 30 days, we auto-refund.")
+
     with st.sidebar.form("checkout_form"):
         name = st.text_input("Name")
         email = st.text_input("Email")
