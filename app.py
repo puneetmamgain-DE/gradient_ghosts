@@ -1,11 +1,15 @@
-import streamlit as st
-# from streamlit import rerun
-from agent import ShoppingAgent
-from utils import load_products, fetch_product_by_id, SizeConverter, RewardSystem, PolicyManager, WeatherService, \
-    GoogleReviewService, encode_image, TrendService, MaterialAnalyzer, CartOptimizer, ReplenishmentService, \
-    PriceLockService, SilentRecoveryService
 import os
 from datetime import datetime
+
+import streamlit as st
+# from streamlit import rerun
+
+from agent import ShoppingAgent
+from utils import fetch_product_by_id, SizeConverter, RewardSystem, PolicyManager, WeatherService, \
+    GoogleReviewService, encode_image, TrendService, MaterialAnalyzer, CartOptimizer, ReplenishmentService, \
+    PriceLockService
+if "chat_input_key" not in st.session_state:
+    st.session_state.chat_input_key = 0
 
 # ---------------------------------------------------------
 # Page Configuration
@@ -17,7 +21,7 @@ st.set_page_config(layout="wide", page_title="Vestra — Intelligent Shopping")
 # ---------------------------------------------------------
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600&family=Rajdhani:wght@500;700&display=swap');
+@import url('[https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600&family=Rajdhani:wght@500;700&display=swap](https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600&family=Rajdhani:wght@500;700&display=swap)');
 
 @keyframes gradient-animation {
     0% { background-position: 0% 50%; }
@@ -193,30 +197,6 @@ st.session_state.setdefault("location", "US")
 st.session_state.setdefault("skin_profile", None)  # Store skin analysis result
 
 # ---------------------------------------------------------
-# SILENT RECOVERY COMMERCE™: Background Scans
-# ---------------------------------------------------------
-# Runs silently on every interaction to monitor Logistics, Weather, and Stock
-with st.empty():
-    # 1. Logistics Recovery (Shipping Delays)
-    if st.session_state.orders:
-        logistics_msgs = SilentRecoveryService.monitor_shipping_delays(st.session_state.orders)
-        for msg in logistics_msgs:
-            st.toast(msg, icon="🚀")
-
-    # 2. Weather Adaptation (Cart Conflicts)
-    if st.session_state.cart:
-        weather_msgs = SilentRecoveryService.monitor_weather_conflicts(st.session_state.cart, st.session_state.weather_context)
-        for msg in weather_msgs:
-            st.toast(msg, icon="🌦️")
-
-    # 3. Stock Anomalies (Reservation)
-    if st.session_state.cart:
-        stock_msgs = SilentRecoveryService.monitor_stock_levels(st.session_state.cart)
-        for msg in stock_msgs:
-            st.toast(msg, icon="📦")
-
-
-# ---------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------
 with st.sidebar:
@@ -295,12 +275,10 @@ with st.sidebar:
         for i, item in enumerate(st.session_state.cart):
             # Display Lock Status in Cart
             lock_msg = f"🔒 Locked @ ${item['price']}"
-            if item.get("stock_reserved"):
-                lock_msg += " | 🛑 Reserved"
             st.markdown(f"**{item['title'][:15]}..** ({lock_msg})")
             if st.button(f"Remove {item['title'][:5]}..", key=f"rm_{i}"):
                 st.session_state.cart.pop(i)
-                st.st.rerun()
+                st.rerun()
     else:
         st.caption("Cart is empty")
 
@@ -364,8 +342,7 @@ with col_trigger:
         uploaded_chat_file = st.file_uploader("Attach Photo for Skin Analysis", type=["png", "jpg", "jpeg"],
                                               key="chat_upload",
                                               label_visibility="visible")
-        user_input = st.text_input("Message...", key="chat_input", label_visibility="collapsed",
-                                   placeholder="Ask Kai for styling advice...")
+        user_input = st.text_input("Message...", key=f"chat_input_{st.session_state.chat_input_key}", label_visibility="collapsed",placeholder="Ask Kai for styling advice...")
 
         if st.button("Send", use_container_width=True):
             if user_input or uploaded_chat_file:
@@ -382,26 +359,42 @@ with col_trigger:
                         msg_content += f" [Analyzed: {skin_analysis}]"
                         st.toast("Skin profile updated!")
 
+                # Save user message
                 st.session_state.history.append(("user", msg_content))
 
-                # Build Context
-                skin_txt = f" Recommended colors based on skin tone: {st.session_state.skin_profile}" if st.session_state.skin_profile else ""
-                # Inject Trends into Context
+                skin_txt = (
+                    f" Recommended colors based on skin tone: {st.session_state.skin_profile}"
+                    if st.session_state.skin_profile else ""
+                )
+
                 season = st.session_state.weather_context.get("season", "Spring")
                 active_trends = TrendService.get_trends(st.session_state.location, season)
                 trend_txt = f" Trends: {', '.join(active_trends)}."
 
-                context_query = f"{user_input}. User is in {st.session_state.location}. Weather: {weather}. Occasion: {occasion}.{skin_txt}{trend_txt}"
+                context_query = (
+                    f"{user_input}. User is in {st.session_state.location}. "
+                    f"Weather: {weather}. Occasion: {occasion}."
+                    f"{skin_txt}{trend_txt}"
+                )
 
-                # Retrieve & Generate
                 retrieved, _ = agent.retrieve(context_query, k=15)
-                parsed = agent.generate_lookbook(context_query, retrieved, st.session_state.history,
-                                                 raw_input=msg_content,
-                                                 skin_analysis_result=st.session_state.skin_profile)
+                parsed = agent.generate_lookbook(
+                    context_query,
+                    retrieved,
+                    st.session_state.history,
+                    raw_input=msg_content,
+                    skin_analysis_result=st.session_state.skin_profile
+                )
 
                 st.session_state.last_lookbook = parsed
-                st.session_state.history.append(("assistant", parsed.get("chat_response", "Updated styles.")))
+                st.session_state.history.append(
+                    ("assistant", parsed.get("chat_response", "Updated styles."))
+                )
+
+                # ✅ CLEAR INPUT (SAFE STREAMLIT WAY)
+                st.session_state.chat_input_key += 1
                 st.rerun()
+
 
 # --- PRODUCT GRID ---
 st.markdown("### 👗 Curated Selection")
@@ -416,7 +409,7 @@ if lookbook and "lookbook" in lookbook and len(lookbook["lookbook"]) > 0:
             with grid_cols[idx % 3]:
                 st.markdown(f'<div class="product-card">', unsafe_allow_html=True)
                 img_url = product['image_url'] if product[
-                    'image_url'] else "https://via.placeholder.com/300x300?text=Vestra"
+                    'image_url'] else "[https://via.placeholder.com/300x300?text=Vestra](https://via.placeholder.com/300x300?text=Vestra)"
                 st.image(img_url, use_container_width=True)
                 st.markdown(f"<div style='font-weight:600; margin-bottom:5px;'>{product['title']}</div>",
                             unsafe_allow_html=True)
@@ -521,6 +514,10 @@ if st.session_state.get("show_return_items"):
                     st.rerun()
     if not has_orders: st.write("No eligible items for return.")
 
+if "order_success" in st.session_state:
+    st.success(st.session_state.order_success)
+    del st.session_state.order_success
+
 if st.session_state.get("show_checkout"):
     st.sidebar.markdown("## 🧾 Secure Checkout")
     subtotal = sum([item['price'] for item in st.session_state.cart])
@@ -546,13 +543,22 @@ if st.session_state.get("show_checkout"):
         if submitted:
             order_id = len(st.session_state.orders) + 1
             pts = RewardSystem.calculate_points("purchase", amount=final_total)
+
             st.session_state.reward_points += pts
             st.session_state.orders.append({
-                "order_id": order_id, "items": st.session_state.cart.copy(), "total": final_total,
-                "name": name, "email": email, "address": addr, "date": datetime.now().date(),
-                "shipping_method": shipping_method
+                "order_id": order_id,
+                "items": st.session_state.cart.copy(),
+                "total": final_total,
+                "name": name,
+                "email": email,
+                "address": addr,
+                "date": datetime.now().date()
             })
+
             st.session_state.cart = []
             st.session_state.show_checkout = False
-            st.success(f"Order #{order_id} confirmed! You earned {pts} XP.")
+
+            # ✅ store message
+            st.session_state.order_success = f"Order #{order_id} confirmed! You earned {pts} XP."
+
             st.rerun()
