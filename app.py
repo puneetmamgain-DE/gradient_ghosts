@@ -1,13 +1,11 @@
+import streamlit as st
+# from streamlit import rerun
+from agent import ShoppingAgent
+from utils import load_products, fetch_product_by_id, SizeConverter, RewardSystem, PolicyManager, WeatherService, \
+    GoogleReviewService, encode_image, TrendService, MaterialAnalyzer, CartOptimizer, ReplenishmentService, \
+    PriceLockService, SilentRecoveryService
 import os
 from datetime import datetime
-
-import streamlit as st
-from streamlit import rerun
-
-from agent import ShoppingAgent
-from utils import fetch_product_by_id, SizeConverter, RewardSystem, PolicyManager, WeatherService, \
-    GoogleReviewService, encode_image, TrendService, MaterialAnalyzer, CartOptimizer, ReplenishmentService, \
-    PriceLockService
 
 # ---------------------------------------------------------
 # Page Configuration
@@ -19,7 +17,7 @@ st.set_page_config(layout="wide", page_title="Vestra — Intelligent Shopping")
 # ---------------------------------------------------------
 st.markdown("""
 <style>
-@import url('[https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600&family=Rajdhani:wght@500;700&display=swap](https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600&family=Rajdhani:wght@500;700&display=swap)');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600&family=Rajdhani:wght@500;700&display=swap');
 
 @keyframes gradient-animation {
     0% { background-position: 0% 50%; }
@@ -195,6 +193,30 @@ st.session_state.setdefault("location", "US")
 st.session_state.setdefault("skin_profile", None)  # Store skin analysis result
 
 # ---------------------------------------------------------
+# SILENT RECOVERY COMMERCE™: Background Scans
+# ---------------------------------------------------------
+# Runs silently on every interaction to monitor Logistics, Weather, and Stock
+with st.empty():
+    # 1. Logistics Recovery (Shipping Delays)
+    if st.session_state.orders:
+        logistics_msgs = SilentRecoveryService.monitor_shipping_delays(st.session_state.orders)
+        for msg in logistics_msgs:
+            st.toast(msg, icon="🚀")
+
+    # 2. Weather Adaptation (Cart Conflicts)
+    if st.session_state.cart:
+        weather_msgs = SilentRecoveryService.monitor_weather_conflicts(st.session_state.cart, st.session_state.weather_context)
+        for msg in weather_msgs:
+            st.toast(msg, icon="🌦️")
+
+    # 3. Stock Anomalies (Reservation)
+    if st.session_state.cart:
+        stock_msgs = SilentRecoveryService.monitor_stock_levels(st.session_state.cart)
+        for msg in stock_msgs:
+            st.toast(msg, icon="📦")
+
+
+# ---------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------
 with st.sidebar:
@@ -273,10 +295,12 @@ with st.sidebar:
         for i, item in enumerate(st.session_state.cart):
             # Display Lock Status in Cart
             lock_msg = f"🔒 Locked @ ${item['price']}"
+            if item.get("stock_reserved"):
+                lock_msg += " | 🛑 Reserved"
             st.markdown(f"**{item['title'][:15]}..** ({lock_msg})")
             if st.button(f"Remove {item['title'][:5]}..", key=f"rm_{i}"):
                 st.session_state.cart.pop(i)
-                rerun()
+                st.st.rerun()
     else:
         st.caption("Cart is empty")
 
@@ -309,7 +333,7 @@ if st.session_state.get("refresh_lookbook", False) and st.session_state.history:
                                      skin_analysis_result=st.session_state.skin_profile)
     st.session_state.last_lookbook = parsed
     st.session_state.refresh_lookbook = False
-    rerun()
+    st.rerun()
 
 # ---------------------------------------------------------
 # Main Layout
@@ -377,7 +401,7 @@ with col_trigger:
 
                 st.session_state.last_lookbook = parsed
                 st.session_state.history.append(("assistant", parsed.get("chat_response", "Updated styles.")))
-                rerun()
+                st.rerun()
 
 # --- PRODUCT GRID ---
 st.markdown("### 👗 Curated Selection")
@@ -392,7 +416,7 @@ if lookbook and "lookbook" in lookbook and len(lookbook["lookbook"]) > 0:
             with grid_cols[idx % 3]:
                 st.markdown(f'<div class="product-card">', unsafe_allow_html=True)
                 img_url = product['image_url'] if product[
-                    'image_url'] else "[https://via.placeholder.com/300x300?text=Vestra](https://via.placeholder.com/300x300?text=Vestra)"
+                    'image_url'] else "https://via.placeholder.com/300x300?text=Vestra"
                 st.image(img_url, use_container_width=True)
                 st.markdown(f"<div style='font-weight:600; margin-bottom:5px;'>{product['title']}</div>",
                             unsafe_allow_html=True)
@@ -455,7 +479,7 @@ if st.session_state.get("run_prediction"):
                     r['locked_price'] = r['price']
                     r['locked_date'] = datetime.now()
                     st.session_state.cart.append(r)
-                    rerun()
+                    st.rerun()
 
     # 2. Replenishment Prediction (Consumables)
     replenish_items = ReplenishmentService.predict_next_buy(st.session_state.orders)
@@ -466,7 +490,7 @@ if st.session_state.get("run_prediction"):
             if st.button(f"Restock {item['title']}", key=f"restock_{item['id']}"):
                 item['locked_price'] = item['price']
                 st.session_state.cart.append(item)
-                rerun()
+                st.rerun()
     elif not st.session_state.orders:
         st.warning("No purchase history found for predictions.")
     else:
@@ -478,7 +502,7 @@ if st.session_state.get("show_return_items"):
     st.markdown("### 🔄 Return Processing")
     if st.button("Close Return Menu"):
         st.session_state.show_return_items = False
-        rerun()
+        st.rerun()
 
     has_orders = False
     for order_idx, order in enumerate(st.session_state.orders):
@@ -494,7 +518,7 @@ if st.session_state.get("show_return_items"):
                         # Autonomous: Reserve logic could go here
                     else:
                         st.error(msg)
-                    rerun()
+                    st.rerun()
     if not has_orders: st.write("No eligible items for return.")
 
 if st.session_state.get("show_checkout"):
@@ -525,9 +549,10 @@ if st.session_state.get("show_checkout"):
             st.session_state.reward_points += pts
             st.session_state.orders.append({
                 "order_id": order_id, "items": st.session_state.cart.copy(), "total": final_total,
-                "name": name, "email": email, "address": addr, "date": datetime.now().date()
+                "name": name, "email": email, "address": addr, "date": datetime.now().date(),
+                "shipping_method": shipping_method
             })
             st.session_state.cart = []
             st.session_state.show_checkout = False
             st.success(f"Order #{order_id} confirmed! You earned {pts} XP.")
-            rerun()
+            st.rerun()
