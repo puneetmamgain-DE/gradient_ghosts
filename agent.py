@@ -157,7 +157,7 @@ class ShoppingAgent:
         items = []
         full_context = (history_context + " " + raw_input).lower()
 
-        has_item = any(w in full_context for w in ["dress", "shoe", "shirt", "pant", "jacket"])
+        has_item = any(w in full_context for w in ["dress", "shoe", "shirt", "pant", "jacket","bracelet", "necklace", "heel", "accessory", "bag", "watch", "suit", "top", "jeans","leather belt"])
         has_budget = any(c in full_context for c in ["$", "dollar", "budget", "under", "price"])
         has_style_occ = any(w in full_context for w in ["formal", "casual", "wedding", "party", "office"])
 
